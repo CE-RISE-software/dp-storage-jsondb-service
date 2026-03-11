@@ -1,0 +1,80 @@
+name: Create Release from Tag
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Matches semantic versioning tags like v1.0.0
+      - 'v*.*.*-*'  # Matches pre-release tags like v1.0.0-beta
+
+env:
+  PROJECT_NAME: CE-RISE Software Template # PLEASE UPDATE THE PROJECT TITLE HERE
+  PRIMARY_REPO_URL: https://codeberg.org/CE-RISE-software/CE-RISE-software # PLEASE UPDATE THE PROJECT MAIN URL HERE
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for creating releases
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for changelog generation
+
+      - name: Extract tag name
+        id: tag
+        run: echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Check if release exists
+        id: check_release
+        run: |
+          if gh release view "${{ steps.tag.outputs.TAG_NAME }}" >/dev/null 2>&1; then
+            echo "EXISTS=true" >> $GITHUB_OUTPUT
+          else
+            echo "EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Release Notes
+        id: notes
+        if: steps.check_release.outputs.EXISTS == 'false'
+        run: |
+          cat << EOF > release_notes.md
+          ## ${PROJECT_NAME} ${{ steps.tag.outputs.TAG_NAME }}
+
+          This release is automatically mirrored from the primary repository on Codeberg: ${PRIMARY_REPO_URL}
+
+          ### Overview
+
+          This tag contains a versioned release of the CE-RISE software components.
+          It is intended to keep GitHub releases aligned with Codeberg tags for downstream automation and archival.
+
+          ### Release Assets
+
+          If configured in CI/CD, this release may be accompanied by:
+          - container images (version tag and commit SHA tags),
+          - OpenAPI artifacts,
+          - generated SDK packages.
+
+          ### Documentation
+
+          Project documentation and operational guidance are published from the primary repository.
+
+          ---
+
+          **Note**: This repository is a mirror. For issues, pull requests, and canonical release notes, use the main Codeberg repository (${PRIMARY_REPO_URL}).
+          EOF
+
+      - name: Create GitHub Release
+        if: steps.check_release.outputs.EXISTS == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG_NAME }}
+          name: Release ${{ steps.tag.outputs.TAG_NAME }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(steps.tag.outputs.TAG_NAME, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
