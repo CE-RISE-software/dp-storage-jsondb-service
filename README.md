@@ -4,7 +4,7 @@
 
 A Rust-based storage backend service for CE-RISE `hex-core-service` that persists and retrieves full digital-passport-like records through a simple HTTP contract.
 
-This is a separate deployable microservice used by `hex-core-service` through its `io-http` adapter. It keeps persistence concerns isolated from the core orchestration layer, stores complete record payloads as JSON documents, and relies on MariaDB or MySQL as the backing store.
+This is a separate deployable microservice used by `hex-core-service` through its `io-http` adapter. It keeps persistence concerns isolated from the core orchestration layer, stores complete record payloads as JSON documents, and relies on MariaDB, MySQL, or PostgreSQL as the backing store.
 
 ---
 
@@ -39,7 +39,7 @@ This is a separate deployable microservice used by `hex-core-service` through it
                                                            | SQL
                                                            v
                                   +-----------------------------------------------+
-                                  | MariaDB or MySQL                              |
+                                  | MariaDB, MySQL, or PostgreSQL                 |
                                   |  - records                                    |
                                   |  - idempotency_keys                           |
                                   |  - record_read_grants                         |
@@ -64,8 +64,9 @@ Use an explicit version tag such as `v0.0.1` for stable deployments.
 docker run --rm -p 8080:8080 \
   -e SERVER_HOST=0.0.0.0 \
   -e SERVER_PORT=8080 \
+  -e DB_BACKEND=postgres \
   -e DB_HOST="<db-host>" \
-  -e DB_PORT=3306 \
+  -e DB_PORT=5432 \
   -e DB_NAME="dp_storage" \
   -e DB_USER="dp_storage" \
   -e DB_PASSWORD="<db-password>" \
@@ -84,6 +85,7 @@ docker run --rm -p 8080:8080 \
 |---|---|---|
 | `SERVER_HOST` | Yes | Bind host for the HTTP service |
 | `SERVER_PORT` | Yes | Bind port for the HTTP service |
+| `DB_BACKEND` | Yes | Database backend (`mysql`, `mariadb`, or `postgres`) |
 | `DB_HOST` | Yes | Database host |
 | `DB_PORT` | Yes | Database port |
 | `DB_NAME` | Yes | Database name |
@@ -102,6 +104,7 @@ Use one of the canonical deployment files depending on the supported SQL backend
 
 - [docker-compose.mysql.yml](/home/riccardo/code/CE-RISE-software/dp-storage-jsondb-service/docker-compose.mysql.yml)
 - [docker-compose.mariadb.yml](/home/riccardo/code/CE-RISE-software/dp-storage-jsondb-service/docker-compose.mariadb.yml)
+- [docker-compose.postgres.yml](/home/riccardo/code/CE-RISE-software/dp-storage-jsondb-service/docker-compose.postgres.yml)
 
 These compose files are deployment-oriented. Local DB test fixtures are kept under `scripts/`.
 
@@ -118,6 +121,7 @@ Run the live database integration test locally:
 ```bash
 bash scripts/test-mysql.sh
 bash scripts/test-mariadb.sh
+bash scripts/test-postgres.sh
 ```
 
 ## License

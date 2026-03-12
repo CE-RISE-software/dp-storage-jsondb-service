@@ -9,7 +9,7 @@ use dp_storage_jsondb_service::{
     },
     repository::{AccessContext, ReadGrant, Record, RecordRepository, SqlRecordRepository},
 };
-use sqlx::{Executor, mysql::MySqlPoolOptions};
+use sqlx::{Executor, mysql::MySqlPoolOptions, postgres::PgPoolOptions};
 
 fn test_db_config() -> Option<DatabaseConfig> {
     let backend = match env::var("TEST_DB_BACKEND")
@@ -18,6 +18,7 @@ fn test_db_config() -> Option<DatabaseConfig> {
     {
         "mysql" => DatabaseBackend::MySql,
         "mariadb" => DatabaseBackend::MariaDb,
+        "postgres" => DatabaseBackend::Postgres,
         _ => return None,
     };
     let host = env::var("TEST_DB_HOST").ok()?;
@@ -38,20 +39,40 @@ fn test_db_config() -> Option<DatabaseConfig> {
 }
 
 async fn reset_database(config: &DatabaseConfig) {
-    let pool = MySqlPoolOptions::new()
-        .max_connections(1)
-        .connect(&config.url())
-        .await
-        .expect("connect reset pool");
-    pool.execute("DELETE FROM record_read_grants")
-        .await
-        .expect("clear record_read_grants");
-    pool.execute("DELETE FROM idempotency_keys")
-        .await
-        .expect("clear idempotency_keys");
-    pool.execute("DELETE FROM records")
-        .await
-        .expect("clear records");
+    match config.backend {
+        DatabaseBackend::MySql | DatabaseBackend::MariaDb => {
+            let pool = MySqlPoolOptions::new()
+                .max_connections(1)
+                .connect(&config.url())
+                .await
+                .expect("connect reset pool");
+            pool.execute("DELETE FROM record_read_grants")
+                .await
+                .expect("clear record_read_grants");
+            pool.execute("DELETE FROM idempotency_keys")
+                .await
+                .expect("clear idempotency_keys");
+            pool.execute("DELETE FROM records")
+                .await
+                .expect("clear records");
+        }
+        DatabaseBackend::Postgres => {
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&config.url())
+                .await
+                .expect("connect reset pool");
+            pool.execute("DELETE FROM record_read_grants")
+                .await
+                .expect("clear record_read_grants");
+            pool.execute("DELETE FROM idempotency_keys")
+                .await
+                .expect("clear idempotency_keys");
+            pool.execute("DELETE FROM records")
+                .await
+                .expect("clear records");
+        }
+    }
 }
 
 fn sample_record(id: &str, scope: &str) -> Record {

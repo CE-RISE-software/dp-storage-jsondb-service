@@ -40,17 +40,22 @@ pub enum AuthMode {
 pub enum DatabaseBackend {
     MySql,
     MariaDb,
+    Postgres,
 }
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
+        let backend = parse_db_backend(get_env("DB_BACKEND").as_deref().unwrap_or("mysql"))?;
         Ok(Self {
             server_host: get_env("SERVER_HOST").unwrap_or_else(|| "0.0.0.0".to_string()),
             server_port: parse_env("SERVER_PORT").unwrap_or(8080),
             db: DatabaseConfig {
-                backend: parse_db_backend(get_env("DB_BACKEND").as_deref().unwrap_or("mysql"))?,
+                backend,
                 host: get_env("DB_HOST").unwrap_or_else(|| "127.0.0.1".to_string()),
-                port: parse_env("DB_PORT").unwrap_or(3306),
+                port: parse_env("DB_PORT").unwrap_or(match backend {
+                    DatabaseBackend::MySql | DatabaseBackend::MariaDb => 3306,
+                    DatabaseBackend::Postgres => 5432,
+                }),
                 name: get_env("DB_NAME").unwrap_or_else(|| "dp_storage".to_string()),
                 user: get_env("DB_USER").unwrap_or_else(|| "dp_storage".to_string()),
                 password: get_env("DB_PASSWORD").unwrap_or_default(),
@@ -74,10 +79,16 @@ impl AppConfig {
 
 impl DatabaseConfig {
     pub fn url(&self) -> String {
-        format!(
-            "mysql://{}:{}@{}:{}/{}",
-            self.user, self.password, self.host, self.port, self.name
-        )
+        match self.backend {
+            DatabaseBackend::MySql | DatabaseBackend::MariaDb => format!(
+                "mysql://{}:{}@{}:{}/{}",
+                self.user, self.password, self.host, self.port, self.name
+            ),
+            DatabaseBackend::Postgres => format!(
+                "postgres://{}:{}@{}:{}/{}",
+                self.user, self.password, self.host, self.port, self.name
+            ),
+        }
     }
 }
 
@@ -110,8 +121,9 @@ fn parse_db_backend(value: &str) -> Result<DatabaseBackend, ConfigError> {
     match value {
         "mysql" => Ok(DatabaseBackend::MySql),
         "mariadb" => Ok(DatabaseBackend::MariaDb),
+        "postgres" => Ok(DatabaseBackend::Postgres),
         other => Err(ConfigError::InvalidValue(format!(
-            "DB_BACKEND must be `mysql` or `mariadb`, got `{other}`"
+            "DB_BACKEND must be `mysql`, `mariadb`, or `postgres`, got `{other}`"
         ))),
     }
 }
