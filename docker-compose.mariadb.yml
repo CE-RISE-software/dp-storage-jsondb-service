@@ -1,0 +1,15 @@
+services:
+  mariadb:
+    image: mariadb:11.8
+    environment:
+      MARIADB_DATABASE: dp_storage_test
+      MARIADB_USER: dp_storage
+      MARIADB_PASSWORD: dp_storage
+      MARIADB_ROOT_PASSWORD: root
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
