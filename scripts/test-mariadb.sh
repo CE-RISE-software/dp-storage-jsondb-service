@@ -2,12 +2,13 @@
 set -euo pipefail
 
 project_name="dp-storage-jsondb-mariadb-test"
+compose_file="scripts/docker-compose.test.mariadb.yml"
 
-docker compose -p "${project_name}" -f docker-compose.mariadb.yml down -v >/dev/null 2>&1 || true
-docker compose -p "${project_name}" -f docker-compose.mariadb.yml up -d
-trap 'docker compose -p "${project_name}" -f docker-compose.mariadb.yml down -v' EXIT
+docker compose -p "${project_name}" -f "${compose_file}" down -v >/dev/null 2>&1 || true
+docker compose -p "${project_name}" -f "${compose_file}" up -d
+trap 'docker compose -p "${project_name}" -f "${compose_file}" down -v' EXIT
 
-container_id="$(docker compose -p "${project_name}" -f docker-compose.mariadb.yml ps -q | head -n 1)"
+container_id="$(docker compose -p "${project_name}" -f "${compose_file}" ps -q | head -n 1)"
 if [ -z "${container_id}" ]; then
   echo "mariadb container id not found"
   exit 1
