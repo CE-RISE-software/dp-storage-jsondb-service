@@ -12,6 +12,7 @@ pub struct AppConfig {
 
 #[derive(Clone, Debug)]
 pub struct DatabaseConfig {
+    pub backend: DatabaseBackend,
     pub host: String,
     pub port: u16,
     pub name: String,
@@ -35,12 +36,19 @@ pub enum AuthMode {
     JwtJwks,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DatabaseBackend {
+    MySql,
+    MariaDb,
+}
+
 impl AppConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         Ok(Self {
             server_host: get_env("SERVER_HOST").unwrap_or_else(|| "0.0.0.0".to_string()),
             server_port: parse_env("SERVER_PORT").unwrap_or(8080),
             db: DatabaseConfig {
+                backend: parse_db_backend(get_env("DB_BACKEND").as_deref().unwrap_or("mysql"))?,
                 host: get_env("DB_HOST").unwrap_or_else(|| "127.0.0.1".to_string()),
                 port: parse_env("DB_PORT").unwrap_or(3306),
                 name: get_env("DB_NAME").unwrap_or_else(|| "dp_storage".to_string()),
@@ -94,6 +102,16 @@ fn parse_auth_mode(value: &str) -> Result<AuthMode, ConfigError> {
         "jwt_jwks" => Ok(AuthMode::JwtJwks),
         other => Err(ConfigError::InvalidValue(format!(
             "AUTH_MODE must be `disabled` or `jwt_jwks`, got `{other}`"
+        ))),
+    }
+}
+
+fn parse_db_backend(value: &str) -> Result<DatabaseBackend, ConfigError> {
+    match value {
+        "mysql" => Ok(DatabaseBackend::MySql),
+        "mariadb" => Ok(DatabaseBackend::MariaDb),
+        other => Err(ConfigError::InvalidValue(format!(
+            "DB_BACKEND must be `mysql` or `mariadb`, got `{other}`"
         ))),
     }
 }

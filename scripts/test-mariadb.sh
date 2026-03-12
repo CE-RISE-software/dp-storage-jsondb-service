@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_name="dp-storage-jsondb-mariadb-test"
-compose_file="scripts/docker-compose.test.mariadb.yml"
+compose_file="${script_dir}/docker-compose.test.mariadb.yml"
 
 docker compose -p "${project_name}" -f "${compose_file}" down -v >/dev/null 2>&1 || true
 docker compose -p "${project_name}" -f "${compose_file}" up -d
@@ -34,5 +35,6 @@ export TEST_DB_PORT=3307
 export TEST_DB_NAME=dp_storage_test
 export TEST_DB_USER=dp_storage
 export TEST_DB_PASSWORD=dp_storage
+export TEST_DB_BACKEND=mariadb
 
 cargo test --test integration_db

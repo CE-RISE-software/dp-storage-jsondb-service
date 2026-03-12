@@ -8,7 +8,7 @@ use sqlx::{MySql, MySqlPool, QueryBuilder, Row, mysql::MySqlPoolOptions, types::
 use tokio::sync::RwLock;
 
 use crate::{
-    config::DatabaseConfig,
+    config::{DatabaseBackend, DatabaseConfig},
     error::AppError,
     query::{
         CompiledField, QueryOperator, QueryRecord, QueryRequest, RecordQueryCondition,
@@ -61,6 +61,7 @@ pub trait RecordRepository: Send + Sync {
 #[derive(Clone)]
 pub struct SqlRecordRepository {
     pool: MySqlPool,
+    backend: DatabaseBackend,
     idempotency_ttl_seconds: i64,
 }
 
@@ -73,6 +74,7 @@ impl SqlRecordRepository {
             .await?;
         Ok(Self {
             pool,
+            backend: config.backend,
             idempotency_ttl_seconds: 120,
         })
     }
@@ -99,7 +101,7 @@ impl RecordRepository for SqlRecordRepository {
         ctx: AccessContext,
     ) -> Result<String, AppError> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM idempotency_keys WHERE expires_at <= UTC_TIMESTAMP()")
+        sqlx::query(self.backend.delete_expired_idempotency_sql())
             .execute(&mut *tx)
             .await?;
 
@@ -128,7 +130,7 @@ impl RecordRepository for SqlRecordRepository {
             r#"
             INSERT INTO records (
                 id, model, version, payload_json, created_by_sub, tenant_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+            ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             "#,
         )
         .bind(&record.id)
@@ -170,7 +172,7 @@ impl RecordRepository for SqlRecordRepository {
             "#,
         );
         builder.push_bind(id);
-        push_access_scope(&mut builder, ctx);
+        push_access_scope(&mut builder, self.backend, ctx);
         let row = builder.build().fetch_optional(&self.pool).await?;
 
         Ok(row.map(row_to_record))
@@ -189,11 +191,11 @@ impl RecordRepository for SqlRecordRepository {
             WHERE 1 = 1
             "#,
         );
-        push_access_scope(&mut builder, ctx);
+        push_access_scope(&mut builder, self.backend, ctx);
 
         for condition in &request.filter.where_conditions {
             builder.push(" AND ");
-            push_condition(&mut builder, condition)?;
+            push_condition(&mut builder, self.backend, condition)?;
         }
 
         if !request.filter.sort.is_empty() {
@@ -202,7 +204,7 @@ impl RecordRepository for SqlRecordRepository {
                 if index > 0 {
                     builder.push(", ");
                 }
-                push_sort(&mut builder, sort)?;
+                push_sort(&mut builder, self.backend, sort)?;
             }
         }
 
@@ -262,12 +264,13 @@ fn payload_hash(payload: &Value) -> String {
 
 fn push_condition(
     builder: &mut QueryBuilder<'_, MySql>,
+    backend: DatabaseBackend,
     condition: &RecordQueryCondition,
 ) -> Result<(), AppError> {
     match compile_field(&condition.field)? {
         CompiledField::Root(column) => push_root_condition(builder, column, condition),
         CompiledField::Payload { json_path } => {
-            push_payload_condition(builder, &json_path, condition)
+            push_payload_condition(builder, backend, &json_path, condition)
         }
     }
 }
@@ -336,15 +339,16 @@ fn push_root_condition(
 
 fn push_payload_condition(
     builder: &mut QueryBuilder<'_, MySql>,
+    backend: DatabaseBackend,
     json_path: &str,
     condition: &RecordQueryCondition,
 ) -> Result<(), AppError> {
     match condition.op {
         QueryOperator::Eq => {
-            push_payload_scalar_comparison(builder, json_path, "=", &condition.value)?;
+            push_payload_scalar_comparison(builder, backend, json_path, "=", &condition.value)?;
         }
         QueryOperator::Ne => {
-            push_payload_scalar_comparison(builder, json_path, "<>", &condition.value)?;
+            push_payload_scalar_comparison(builder, backend, json_path, "<>", &condition.value)?;
         }
         QueryOperator::In => {
             let values = condition.value.as_array().ok_or_else(|| {
@@ -364,7 +368,7 @@ fn push_payload_condition(
                 if index > 0 {
                     builder.push(" OR ");
                 }
-                push_payload_scalar_comparison(builder, json_path, "=", value)?;
+                push_payload_scalar_comparison(builder, backend, json_path, "=", value)?;
             }
             builder.push(")");
         }
@@ -372,30 +376,27 @@ fn push_payload_condition(
             builder.push("(");
             let mut has_clause = false;
             if let Ok(needle) = scalar_as_string(&condition.value) {
-                builder.push("JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
-                builder.push_bind(json_path.to_string());
-                builder.push(")) LIKE ");
+                backend.push_json_text_extract(builder, "payload_json", json_path);
+                builder.push(" LIKE ");
                 builder.push_bind(format!("%{}%", needle));
                 has_clause = true;
             }
             if has_clause {
                 builder.push(" OR ");
             }
-            builder.push("JSON_CONTAINS(JSON_EXTRACT(payload_json, ");
-            builder.push_bind(json_path.to_string());
-            builder.push("), ");
+            backend.push_json_contains_extract(builder, "payload_json", json_path);
+            builder.push(", ");
             builder.push_bind(json_literal(&condition.value)?);
             builder.push(")");
             builder.push(")");
         }
         QueryOperator::Exists => {
             let should_exist = condition.value.as_bool().unwrap_or(false);
-            builder.push("JSON_EXTRACT(payload_json, ");
-            builder.push_bind(json_path.to_string());
+            backend.push_json_extract(builder, "payload_json", json_path);
             builder.push(if should_exist {
-                ") IS NOT NULL"
+                " IS NOT NULL"
             } else {
-                ") IS NULL"
+                " IS NULL"
             });
         }
         QueryOperator::Gt | QueryOperator::Gte | QueryOperator::Lt | QueryOperator::Lte => {
@@ -407,9 +408,9 @@ fn push_payload_condition(
                 _ => unreachable!(),
             };
             if condition.value.is_number() {
-                builder.push("CAST(JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
-                builder.push_bind(json_path.to_string());
-                builder.push(")) AS DECIMAL(30,10)) ");
+                builder.push("CAST(");
+                backend.push_json_text_extract(builder, "payload_json", json_path);
+                builder.push(" AS DECIMAL(30,10)) ");
                 builder.push(operator);
                 builder.push(" ");
                 if let Some(number) = condition.value.as_f64() {
@@ -421,9 +422,8 @@ fn push_payload_condition(
                     )));
                 }
             } else if condition.value.is_string() {
-                builder.push("JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
-                builder.push_bind(json_path.to_string());
-                builder.push(")) ");
+                backend.push_json_text_extract(builder, "payload_json", json_path);
+                builder.push(" ");
                 builder.push(operator);
                 builder.push(" ");
                 builder.push_bind(scalar_as_string(&condition.value)?);
@@ -440,6 +440,7 @@ fn push_payload_condition(
 
 fn push_sort(
     builder: &mut QueryBuilder<'_, MySql>,
+    backend: DatabaseBackend,
     sort: &RecordQuerySort,
 ) -> Result<(), AppError> {
     match compile_field(&sort.field)? {
@@ -447,9 +448,7 @@ fn push_sort(
             builder.push(column);
         }
         CompiledField::Payload { json_path } => {
-            builder.push("JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
-            builder.push_bind(json_path);
-            builder.push("))");
+            backend.push_json_text_extract(builder, "payload_json", &json_path);
         }
     }
     builder.push(match sort.direction {
@@ -505,23 +504,23 @@ fn json_literal(value: &Value) -> Result<String, AppError> {
 
 fn push_payload_scalar_comparison(
     builder: &mut QueryBuilder<'_, MySql>,
+    backend: DatabaseBackend,
     json_path: &str,
     operator: &'static str,
     value: &Value,
 ) -> Result<(), AppError> {
     match value {
         Value::String(string) => {
-            builder.push("JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
-            builder.push_bind(json_path.to_string());
-            builder.push(")) ");
+            backend.push_json_text_extract(builder, "payload_json", json_path);
+            builder.push(" ");
             builder.push(operator);
             builder.push(" ");
             builder.push_bind(string.clone());
         }
         Value::Number(number) => {
-            builder.push("CAST(JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
-            builder.push_bind(json_path.to_string());
-            builder.push(")) AS DECIMAL(30,10)) ");
+            builder.push("CAST(");
+            backend.push_json_text_extract(builder, "payload_json", json_path);
+            builder.push(" AS DECIMAL(30,10)) ");
             builder.push(operator);
             builder.push(" ");
             if let Some(integer) = number.as_i64() {
@@ -537,9 +536,8 @@ fn push_payload_scalar_comparison(
             }
         }
         Value::Bool(boolean) => {
-            builder.push("JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
-            builder.push_bind(json_path.to_string());
-            builder.push(")) ");
+            backend.push_json_text_extract(builder, "payload_json", json_path);
+            builder.push(" ");
             builder.push(operator);
             builder.push(" ");
             builder.push_bind(boolean.to_string());
@@ -551,6 +549,60 @@ fn push_payload_scalar_comparison(
         }
     }
     Ok(())
+}
+
+impl DatabaseBackend {
+    fn delete_expired_idempotency_sql(self) -> &'static str {
+        match self {
+            DatabaseBackend::MySql | DatabaseBackend::MariaDb => {
+                "DELETE FROM idempotency_keys WHERE expires_at <= CURRENT_TIMESTAMP"
+            }
+        }
+    }
+
+    fn push_json_extract(
+        self,
+        builder: &mut QueryBuilder<'_, MySql>,
+        column: &'static str,
+        json_path: &str,
+    ) {
+        match self {
+            DatabaseBackend::MySql | DatabaseBackend::MariaDb => {
+                builder.push("JSON_EXTRACT(").push(column).push(", ");
+                builder.push_bind(json_path.to_string());
+                builder.push(")");
+            }
+        }
+    }
+
+    fn push_json_text_extract(
+        self,
+        builder: &mut QueryBuilder<'_, MySql>,
+        column: &'static str,
+        json_path: &str,
+    ) {
+        match self {
+            DatabaseBackend::MySql | DatabaseBackend::MariaDb => {
+                builder.push("JSON_UNQUOTE(");
+                self.push_json_extract(builder, column, json_path);
+                builder.push(")");
+            }
+        }
+    }
+
+    fn push_json_contains_extract(
+        self,
+        builder: &mut QueryBuilder<'_, MySql>,
+        column: &'static str,
+        json_path: &str,
+    ) {
+        match self {
+            DatabaseBackend::MySql | DatabaseBackend::MariaDb => {
+                builder.push("JSON_CONTAINS(");
+                self.push_json_extract(builder, column, json_path);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Default)]
@@ -666,7 +718,11 @@ impl RecordRepository for InMemoryRecordRepository {
     }
 }
 
-fn push_access_scope(builder: &mut QueryBuilder<'_, MySql>, ctx: &AccessContext) {
+fn push_access_scope(
+    builder: &mut QueryBuilder<'_, MySql>,
+    _backend: DatabaseBackend,
+    ctx: &AccessContext,
+) {
     builder.push(" AND (");
     let mut has_clause = false;
 

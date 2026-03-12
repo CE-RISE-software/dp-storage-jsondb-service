@@ -2,7 +2,7 @@ use std::env;
 
 use chrono::Utc;
 use dp_storage_jsondb_service::{
-    config::DatabaseConfig,
+    config::{DatabaseBackend, DatabaseConfig},
     query::{
         QueryOperator, QueryRequest, RecordQueryCondition, RecordQueryFilter, RecordQuerySort,
         SortDirection,
@@ -12,12 +12,21 @@ use dp_storage_jsondb_service::{
 use sqlx::{Executor, mysql::MySqlPoolOptions};
 
 fn test_db_config() -> Option<DatabaseConfig> {
+    let backend = match env::var("TEST_DB_BACKEND")
+        .unwrap_or_else(|_| "mysql".to_string())
+        .as_str()
+    {
+        "mysql" => DatabaseBackend::MySql,
+        "mariadb" => DatabaseBackend::MariaDb,
+        _ => return None,
+    };
     let host = env::var("TEST_DB_HOST").ok()?;
     let port = env::var("TEST_DB_PORT").ok()?.parse().ok()?;
     let name = env::var("TEST_DB_NAME").ok()?;
     let user = env::var("TEST_DB_USER").ok()?;
     let password = env::var("TEST_DB_PASSWORD").unwrap_or_default();
     Some(DatabaseConfig {
+        backend,
         host,
         port,
         name,
