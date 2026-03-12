@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use sqlx::{MySql, MySqlPool, QueryBuilder, Row, mysql::MySqlPoolOptions, types::Json};
+use sqlx::{Row, types::Json};
 use tokio::sync::RwLock;
 
 use crate::{
@@ -15,6 +15,12 @@ use crate::{
         RecordQuerySort, compile_field,
     },
 };
+
+mod sql_backend;
+mod sql_runtime;
+
+use self::sql_backend::SqlBackendExt;
+use self::sql_runtime::{SqlPool, SqlPoolOptions, SqlQueryBuilder, SqlRow};
 
 #[derive(Clone, Debug)]
 pub struct Record {
@@ -60,14 +66,14 @@ pub trait RecordRepository: Send + Sync {
 
 #[derive(Clone)]
 pub struct SqlRecordRepository {
-    pool: MySqlPool,
+    pool: SqlPool,
     backend: DatabaseBackend,
     idempotency_ttl_seconds: i64,
 }
 
 impl SqlRecordRepository {
     pub async fn connect(config: &DatabaseConfig) -> Result<Self, AppError> {
-        let pool = MySqlPoolOptions::new()
+        let pool = SqlPoolOptions::new()
             .max_connections(config.pool_size)
             .acquire_timeout(std::time::Duration::from_millis(config.timeout_ms))
             .connect(&config.url())
@@ -87,7 +93,7 @@ impl SqlRecordRepository {
             .map_err(|err| AppError::Internal(format!("database migration failed: {err}")))
     }
 
-    pub fn pool(&self) -> &MySqlPool {
+    pub fn pool(&self) -> &SqlPool {
         &self.pool
     }
 }
@@ -164,7 +170,7 @@ impl RecordRepository for SqlRecordRepository {
     }
 
     async fn read_record(&self, id: &str, ctx: &AccessContext) -> Result<Option<Record>, AppError> {
-        let mut builder = QueryBuilder::<MySql>::new(
+        let mut builder = SqlQueryBuilder::new(
             r#"
             SELECT id, model, version, payload_json, created_by_sub, tenant_id, created_at, updated_at
             FROM records
@@ -184,7 +190,7 @@ impl RecordRepository for SqlRecordRepository {
         ctx: &AccessContext,
     ) -> Result<Vec<Record>, AppError> {
         request.filter.validate()?;
-        let mut builder = QueryBuilder::<MySql>::new(
+        let mut builder = SqlQueryBuilder::new(
             r#"
             SELECT id, model, version, payload_json, created_by_sub, tenant_id, created_at, updated_at
             FROM records
@@ -243,7 +249,7 @@ impl RecordRepository for SqlRecordRepository {
     }
 }
 
-fn row_to_record(row: sqlx::mysql::MySqlRow) -> Record {
+fn row_to_record(row: SqlRow) -> Record {
     Record {
         id: row.get("id"),
         model: row.get("model"),
@@ -263,7 +269,7 @@ fn payload_hash(payload: &Value) -> String {
 }
 
 fn push_condition(
-    builder: &mut QueryBuilder<'_, MySql>,
+    builder: &mut SqlQueryBuilder<'_>,
     backend: DatabaseBackend,
     condition: &RecordQueryCondition,
 ) -> Result<(), AppError> {
@@ -276,7 +282,7 @@ fn push_condition(
 }
 
 fn push_root_condition(
-    builder: &mut QueryBuilder<'_, MySql>,
+    builder: &mut SqlQueryBuilder<'_>,
     column: &'static str,
     condition: &RecordQueryCondition,
 ) -> Result<(), AppError> {
@@ -338,7 +344,7 @@ fn push_root_condition(
 }
 
 fn push_payload_condition(
-    builder: &mut QueryBuilder<'_, MySql>,
+    builder: &mut SqlQueryBuilder<'_>,
     backend: DatabaseBackend,
     json_path: &str,
     condition: &RecordQueryCondition,
@@ -439,7 +445,7 @@ fn push_payload_condition(
 }
 
 fn push_sort(
-    builder: &mut QueryBuilder<'_, MySql>,
+    builder: &mut SqlQueryBuilder<'_>,
     backend: DatabaseBackend,
     sort: &RecordQuerySort,
 ) -> Result<(), AppError> {
@@ -458,7 +464,7 @@ fn push_sort(
     Ok(())
 }
 
-fn push_scalar_bind(builder: &mut QueryBuilder<'_, MySql>, value: &Value) {
+fn push_scalar_bind(builder: &mut SqlQueryBuilder<'_>, value: &Value) {
     match value {
         Value::String(value) => {
             builder.push_bind(value.clone());
@@ -503,7 +509,7 @@ fn json_literal(value: &Value) -> Result<String, AppError> {
 }
 
 fn push_payload_scalar_comparison(
-    builder: &mut QueryBuilder<'_, MySql>,
+    builder: &mut SqlQueryBuilder<'_>,
     backend: DatabaseBackend,
     json_path: &str,
     operator: &'static str,
@@ -549,60 +555,6 @@ fn push_payload_scalar_comparison(
         }
     }
     Ok(())
-}
-
-impl DatabaseBackend {
-    fn delete_expired_idempotency_sql(self) -> &'static str {
-        match self {
-            DatabaseBackend::MySql | DatabaseBackend::MariaDb => {
-                "DELETE FROM idempotency_keys WHERE expires_at <= CURRENT_TIMESTAMP"
-            }
-        }
-    }
-
-    fn push_json_extract(
-        self,
-        builder: &mut QueryBuilder<'_, MySql>,
-        column: &'static str,
-        json_path: &str,
-    ) {
-        match self {
-            DatabaseBackend::MySql | DatabaseBackend::MariaDb => {
-                builder.push("JSON_EXTRACT(").push(column).push(", ");
-                builder.push_bind(json_path.to_string());
-                builder.push(")");
-            }
-        }
-    }
-
-    fn push_json_text_extract(
-        self,
-        builder: &mut QueryBuilder<'_, MySql>,
-        column: &'static str,
-        json_path: &str,
-    ) {
-        match self {
-            DatabaseBackend::MySql | DatabaseBackend::MariaDb => {
-                builder.push("JSON_UNQUOTE(");
-                self.push_json_extract(builder, column, json_path);
-                builder.push(")");
-            }
-        }
-    }
-
-    fn push_json_contains_extract(
-        self,
-        builder: &mut QueryBuilder<'_, MySql>,
-        column: &'static str,
-        json_path: &str,
-    ) {
-        match self {
-            DatabaseBackend::MySql | DatabaseBackend::MariaDb => {
-                builder.push("JSON_CONTAINS(");
-                self.push_json_extract(builder, column, json_path);
-            }
-        }
-    }
 }
 
 #[derive(Clone, Default)]
@@ -719,7 +671,7 @@ impl RecordRepository for InMemoryRecordRepository {
 }
 
 fn push_access_scope(
-    builder: &mut QueryBuilder<'_, MySql>,
+    builder: &mut SqlQueryBuilder<'_>,
     _backend: DatabaseBackend,
     ctx: &AccessContext,
 ) {
