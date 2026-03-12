@@ -28,9 +28,9 @@ Database selection is made through environment configuration, primarily:
 
 Canonical deployment-oriented compose files are provided for each supported backend:
 
-- [docker-compose.mysql.yml](/home/riccardo/code/CE-RISE-software/dp-storage-jsondb-service/docker-compose.mysql.yml)
-- [docker-compose.mariadb.yml](/home/riccardo/code/CE-RISE-software/dp-storage-jsondb-service/docker-compose.mariadb.yml)
-- [docker-compose.postgres.yml](/home/riccardo/code/CE-RISE-software/dp-storage-jsondb-service/docker-compose.postgres.yml)
+- `docker-compose.mysql.yml`
+- `docker-compose.mariadb.yml`
+- `docker-compose.postgres.yml`
 
 These files pair the service container with the matching database container.
 

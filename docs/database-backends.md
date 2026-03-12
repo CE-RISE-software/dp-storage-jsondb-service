@@ -64,8 +64,8 @@ This backend is now part of the supported runtime surface and is exercised throu
 
 The service keeps backend-specific migration directories:
 
-- [migrations/mysql](/home/riccardo/code/CE-RISE-software/dp-storage-jsondb-service/migrations/mysql)
-- [migrations/postgres](/home/riccardo/code/CE-RISE-software/dp-storage-jsondb-service/migrations/postgres)
+- `migrations/mysql`
+- `migrations/postgres`
 
 The MySQL migration path is used for both MySQL and MariaDB.
 

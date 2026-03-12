@@ -1,0 +1,12 @@
+[book]
+title = "CE-RISE Digital Passport JSON Database Storage Service"
+authors = ["CE-RISE consortium"]
+language = "en"
+multilingual = false
+src = "."
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://codeberg.org/CE-RISE-software/dp-storage-jsondb-service"
+additional-js = ["theme/custom.js"]
