@@ -68,6 +68,12 @@ pub struct QueryRecord<'a> {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CompiledField {
+    Root(&'static str),
+    Payload { json_path: String },
+}
+
 impl RecordQueryFilter {
     pub fn validate(&self) -> Result<(), AppError> {
         if self.where_conditions.is_empty() {
@@ -77,11 +83,7 @@ impl RecordQueryFilter {
         }
 
         for condition in &self.where_conditions {
-            if condition.field.trim().is_empty() {
-                return Err(AppError::BadRequest(
-                    "query condition field cannot be empty".to_string(),
-                ));
-            }
+            compile_field(&condition.field)?;
 
             if matches!(condition.op, QueryOperator::In) && !condition.value.is_array() {
                 return Err(AppError::BadRequest(format!(
@@ -96,6 +98,10 @@ impl RecordQueryFilter {
                     condition.field
                 )));
             }
+        }
+
+        for sort in &self.sort {
+            compile_field(&sort.field)?;
         }
 
         Ok(())
@@ -241,6 +247,25 @@ fn value_for_field(record: &QueryRecord<'_>, field: &str) -> Result<Option<Value
     }
 }
 
+pub fn compile_field(field: &str) -> Result<CompiledField, AppError> {
+    match field {
+        "id" => Ok(CompiledField::Root("id")),
+        "model" => Ok(CompiledField::Root("model")),
+        "version" => Ok(CompiledField::Root("version")),
+        "created_at" => Ok(CompiledField::Root("created_at")),
+        "updated_at" => Ok(CompiledField::Root("updated_at")),
+        payload if payload.starts_with("payload.") => Ok(CompiledField::Payload {
+            json_path: payload_path_to_json_path(&payload["payload.".len()..])?,
+        }),
+        "payload" => Ok(CompiledField::Payload {
+            json_path: "$".to_string(),
+        }),
+        _ => Err(AppError::BadRequest(format!(
+            "unsupported query field `{field}`"
+        ))),
+    }
+}
+
 fn extract_payload_value(payload: &Value, path: &str) -> Option<Value> {
     let mut current = payload;
     for segment in split_path(path) {
@@ -289,6 +314,45 @@ fn split_path(path: &str) -> Vec<PathSegment> {
     segments
 }
 
+fn payload_path_to_json_path(path: &str) -> Result<String, AppError> {
+    let segments = split_path(path);
+    if segments.is_empty() {
+        return Err(AppError::BadRequest(
+            "payload field path cannot be empty".to_string(),
+        ));
+    }
+
+    let mut json_path = String::from("$");
+    for segment in segments {
+        match segment {
+            PathSegment::Key(key) => {
+                if key.is_empty() {
+                    return Err(AppError::BadRequest(
+                        "payload field path contains an empty key".to_string(),
+                    ));
+                }
+                if !key
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                {
+                    return Err(AppError::BadRequest(format!(
+                        "payload field path segment `{key}` contains unsupported characters"
+                    )));
+                }
+                json_path.push('.');
+                json_path.push_str(&key);
+            }
+            PathSegment::Index(index) => {
+                json_path.push('[');
+                json_path.push_str(&index.to_string());
+                json_path.push(']');
+            }
+        }
+    }
+
+    Ok(json_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,6 +390,17 @@ mod tests {
             condition
                 .matches(&sample_record())
                 .expect("query evaluation")
+        );
+    }
+
+    #[test]
+    fn compile_field_validates_payload_paths() {
+        let field = compile_field("payload.applied_schemas[0].schema_url").expect("field");
+        assert_eq!(
+            field,
+            CompiledField::Payload {
+                json_path: "$.applied_schemas[0].schema_url".to_string()
+            }
         );
     }
 }

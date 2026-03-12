@@ -19,7 +19,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = AppConfig::from_env()?;
     let auth = AuthService::new(&config.auth)?;
-    let repository = Arc::new(SqlRecordRepository::connect(&config.db).await?);
+    let repository = SqlRecordRepository::connect(&config.db).await?;
+    repository.run_migrations().await?;
+    let repository = Arc::new(repository);
     let state = AppState { auth, repository };
 
     let listener = TcpListener::bind(config.bind_addr()?).await?;

@@ -17,7 +17,7 @@ use crate::{
     error::AppError,
     openapi::ApiDoc,
     query::QueryRequest,
-    repository::{Record, RecordRepository, WriteContext},
+    repository::{AccessContext, Record, RecordRepository},
 };
 
 #[derive(Clone)]
@@ -113,7 +113,7 @@ pub async fn write_record(
         .write_record(
             &idempotency_key,
             record,
-            WriteContext {
+            AccessContext {
                 subject: Some(auth.subject),
                 tenant_id: auth.tenant_id,
             },
@@ -143,10 +143,16 @@ pub async fn read_record(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ApiRecord>, AppError> {
-    let _auth = state.auth.authorize(&headers, "records:read").await?;
+    let auth = state.auth.authorize(&headers, "records:read").await?;
     let record = state
         .repository
-        .read_record(&id)
+        .read_record(
+            &id,
+            &AccessContext {
+                subject: Some(auth.subject),
+                tenant_id: auth.tenant_id,
+            },
+        )
         .await?
         .ok_or_else(|| AppError::NotFound(format!("record `{id}` not found")))?;
     Ok(Json(to_api_record(record)))
@@ -171,8 +177,17 @@ pub async fn query_records(
     headers: HeaderMap,
     Json(request): Json<QueryRequest>,
 ) -> Result<Json<QueryResponse>, AppError> {
-    let _auth = state.auth.authorize(&headers, "records:read").await?;
-    let records = state.repository.query_records(&request).await?;
+    let auth = state.auth.authorize(&headers, "records:read").await?;
+    let records = state
+        .repository
+        .query_records(
+            &request,
+            &AccessContext {
+                subject: Some(auth.subject),
+                tenant_id: auth.tenant_id,
+            },
+        )
+        .await?;
     Ok(Json(QueryResponse {
         records: records.into_iter().map(to_api_record).collect(),
     }))
