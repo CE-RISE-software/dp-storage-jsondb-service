@@ -34,6 +34,12 @@ pub struct AccessContext {
     pub tenant_id: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ReadGrant {
+    pub subject: Option<String>,
+    pub tenant_id: Option<String>,
+}
+
 #[async_trait]
 pub trait RecordRepository: Send + Sync {
     async fn write_record(
@@ -48,6 +54,7 @@ pub trait RecordRepository: Send + Sync {
         request: &QueryRequest,
         ctx: &AccessContext,
     ) -> Result<Vec<Record>, AppError>;
+    async fn grant_read_access(&self, record_id: &str, grant: ReadGrant) -> Result<(), AppError>;
     async fn readiness(&self) -> Result<(), AppError>;
 }
 
@@ -76,6 +83,10 @@ impl SqlRecordRepository {
             .run(&self.pool)
             .await
             .map_err(|err| AppError::Internal(format!("database migration failed: {err}")))
+    }
+
+    pub fn pool(&self) -> &MySqlPool {
+        &self.pool
     }
 }
 
@@ -204,6 +215,26 @@ impl RecordRepository for SqlRecordRepository {
         Ok(rows.into_iter().map(row_to_record).collect())
     }
 
+    async fn grant_read_access(&self, record_id: &str, grant: ReadGrant) -> Result<(), AppError> {
+        if grant.subject.is_none() && grant.tenant_id.is_none() {
+            return Err(AppError::BadRequest(
+                "read grant must target a subject or tenant".to_string(),
+            ));
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO record_read_grants (record_id, grantee_sub, grantee_tenant_id)
+            VALUES (?, ?, ?)
+            "#,
+        )
+        .bind(record_id)
+        .bind(grant.subject)
+        .bind(grant.tenant_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     async fn readiness(&self) -> Result<(), AppError> {
         sqlx::query("SELECT 1").execute(&self.pool).await?;
         Ok(())
@@ -310,18 +341,10 @@ fn push_payload_condition(
 ) -> Result<(), AppError> {
     match condition.op {
         QueryOperator::Eq => {
-            builder.push("COALESCE(JSON_CONTAINS(JSON_EXTRACT(payload_json, ");
-            builder.push_bind(json_path.to_string());
-            builder.push("), CAST(");
-            builder.push_bind(json_literal(&condition.value)?);
-            builder.push(" AS JSON)), 0) = 1");
+            push_payload_scalar_comparison(builder, json_path, "=", &condition.value)?;
         }
         QueryOperator::Ne => {
-            builder.push("COALESCE(JSON_CONTAINS(JSON_EXTRACT(payload_json, ");
-            builder.push_bind(json_path.to_string());
-            builder.push("), CAST(");
-            builder.push_bind(json_literal(&condition.value)?);
-            builder.push(" AS JSON)), 0) = 0");
+            push_payload_scalar_comparison(builder, json_path, "<>", &condition.value)?;
         }
         QueryOperator::In => {
             let values = condition.value.as_array().ok_or_else(|| {
@@ -341,25 +364,28 @@ fn push_payload_condition(
                 if index > 0 {
                     builder.push(" OR ");
                 }
-                builder.push("COALESCE(JSON_CONTAINS(JSON_EXTRACT(payload_json, ");
-                builder.push_bind(json_path.to_string());
-                builder.push("), CAST(");
-                builder.push_bind(json_literal(value)?);
-                builder.push(" AS JSON)), 0) = 1");
+                push_payload_scalar_comparison(builder, json_path, "=", value)?;
             }
             builder.push(")");
         }
         QueryOperator::Contains => {
             builder.push("(");
-            builder.push("JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
+            let mut has_clause = false;
+            if let Ok(needle) = scalar_as_string(&condition.value) {
+                builder.push("JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
+                builder.push_bind(json_path.to_string());
+                builder.push(")) LIKE ");
+                builder.push_bind(format!("%{}%", needle));
+                has_clause = true;
+            }
+            if has_clause {
+                builder.push(" OR ");
+            }
+            builder.push("JSON_CONTAINS(JSON_EXTRACT(payload_json, ");
             builder.push_bind(json_path.to_string());
-            builder.push(")) LIKE ");
-            builder.push_bind(format!("%{}%", scalar_as_string(&condition.value)?));
-            builder.push(" OR COALESCE(JSON_CONTAINS(JSON_EXTRACT(payload_json, ");
-            builder.push_bind(json_path.to_string());
-            builder.push("), CAST(");
+            builder.push("), ");
             builder.push_bind(json_literal(&condition.value)?);
-            builder.push(" AS JSON)), 0) = 1");
+            builder.push(")");
             builder.push(")");
         }
         QueryOperator::Exists => {
@@ -477,6 +503,56 @@ fn json_literal(value: &Value) -> Result<String, AppError> {
         .map_err(|err| AppError::Internal(format!("failed to serialize query value: {err}")))
 }
 
+fn push_payload_scalar_comparison(
+    builder: &mut QueryBuilder<'_, MySql>,
+    json_path: &str,
+    operator: &'static str,
+    value: &Value,
+) -> Result<(), AppError> {
+    match value {
+        Value::String(string) => {
+            builder.push("JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
+            builder.push_bind(json_path.to_string());
+            builder.push(")) ");
+            builder.push(operator);
+            builder.push(" ");
+            builder.push_bind(string.clone());
+        }
+        Value::Number(number) => {
+            builder.push("CAST(JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
+            builder.push_bind(json_path.to_string());
+            builder.push(")) AS DECIMAL(30,10)) ");
+            builder.push(operator);
+            builder.push(" ");
+            if let Some(integer) = number.as_i64() {
+                builder.push_bind(integer as f64);
+            } else if let Some(unsigned) = number.as_u64() {
+                builder.push_bind(unsigned as f64);
+            } else if let Some(float) = number.as_f64() {
+                builder.push_bind(float);
+            } else {
+                return Err(AppError::BadRequest(
+                    "numeric query value is invalid".to_string(),
+                ));
+            }
+        }
+        Value::Bool(boolean) => {
+            builder.push("JSON_UNQUOTE(JSON_EXTRACT(payload_json, ");
+            builder.push_bind(json_path.to_string());
+            builder.push(")) ");
+            builder.push(operator);
+            builder.push(" ");
+            builder.push_bind(boolean.to_string());
+        }
+        _ => {
+            return Err(AppError::BadRequest(
+                "payload comparisons currently support scalar query values only".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Default)]
 pub struct InMemoryRecordRepository {
     state: Arc<RwLock<InMemoryState>>,
@@ -486,6 +562,7 @@ pub struct InMemoryRecordRepository {
 struct InMemoryState {
     records: HashMap<String, Record>,
     idempotency: HashMap<String, DateTime<Utc>>,
+    read_grants: HashMap<String, Vec<ReadGrant>>,
 }
 
 #[async_trait]
@@ -521,7 +598,8 @@ impl RecordRepository for InMemoryRecordRepository {
         let Some(record) = state.records.get(id).cloned() else {
             return Ok(None);
         };
-        Ok(if record_is_visible(&record, ctx) {
+        let grants = state.read_grants.get(id).map(Vec::as_slice).unwrap_or(&[]);
+        Ok(if record_is_visible(&record, grants, ctx) {
             Some(record)
         } else {
             None
@@ -536,7 +614,14 @@ impl RecordRepository for InMemoryRecordRepository {
         request.filter.validate()?;
         let state = self.state.read().await;
         let mut records: Vec<Record> = state.records.values().cloned().collect();
-        records.retain(|record| record_is_visible(record, ctx));
+        records.retain(|record| {
+            let grants = state
+                .read_grants
+                .get(&record.id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            record_is_visible(record, grants, ctx)
+        });
         records.retain(|record| {
             let query_record = QueryRecord {
                 id: &record.id,
@@ -553,32 +638,107 @@ impl RecordRepository for InMemoryRecordRepository {
         Ok(records.into_iter().skip(offset).take(limit).collect())
     }
 
+    async fn grant_read_access(&self, record_id: &str, grant: ReadGrant) -> Result<(), AppError> {
+        if grant.subject.is_none() && grant.tenant_id.is_none() {
+            return Err(AppError::BadRequest(
+                "read grant must target a subject or tenant".to_string(),
+            ));
+        }
+        let mut state = self.state.write().await;
+        if !state.records.contains_key(record_id) {
+            return Err(AppError::NotFound(format!(
+                "record `{record_id}` not found"
+            )));
+        }
+        let grants = state.read_grants.entry(record_id.to_string()).or_default();
+        grants.push(grant);
+        let Some(record) = state.records.get_mut(record_id) else {
+            return Err(AppError::NotFound(format!(
+                "record `{record_id}` not found"
+            )));
+        };
+        record.updated_at = Utc::now();
+        Ok(())
+    }
+
     async fn readiness(&self) -> Result<(), AppError> {
         Ok(())
     }
 }
 
 fn push_access_scope(builder: &mut QueryBuilder<'_, MySql>, ctx: &AccessContext) {
+    builder.push(" AND (");
+    let mut has_clause = false;
+
     if let Some(subject) = &ctx.subject {
-        builder.push(" AND created_by_sub = ");
+        builder.push("created_by_sub = ");
         builder.push_bind(subject.clone());
+        has_clause = true;
     }
     if let Some(tenant_id) = &ctx.tenant_id {
-        builder.push(" AND tenant_id = ");
+        if has_clause {
+            builder.push(" AND ");
+        }
+        builder.push("tenant_id = ");
         builder.push_bind(tenant_id.clone());
+        has_clause = true;
     }
+
+    if has_clause {
+        builder.push(" OR ");
+    }
+
+    builder.push("EXISTS (SELECT 1 FROM record_read_grants rrg WHERE rrg.record_id = records.id");
+    let mut has_grant_clause = false;
+    if ctx.subject.is_none() && ctx.tenant_id.is_none() {
+        builder.push(" AND 1 = 0");
+    } else {
+        builder.push(" AND (");
+        if let Some(subject) = &ctx.subject {
+            builder.push("rrg.grantee_sub = ");
+            builder.push_bind(subject.clone());
+            has_grant_clause = true;
+        }
+        if let Some(tenant_id) = &ctx.tenant_id {
+            if has_grant_clause {
+                builder.push(" OR ");
+            }
+            builder.push("rrg.grantee_tenant_id = ");
+            builder.push_bind(tenant_id.clone());
+            has_grant_clause = true;
+        }
+        if !has_grant_clause {
+            builder.push("1 = 0");
+        }
+        builder.push(")");
+    }
+    builder.push("))");
 }
 
-fn record_is_visible(record: &Record, ctx: &AccessContext) -> bool {
-    let subject_ok = match &ctx.subject {
+fn record_is_visible(record: &Record, grants: &[ReadGrant], ctx: &AccessContext) -> bool {
+    let owner_subject_ok = match &ctx.subject {
         Some(subject) => record.created_by_sub.as_ref() == Some(subject),
-        None => true,
+        None => false,
     };
-    let tenant_ok = match &ctx.tenant_id {
+    let owner_tenant_ok = match &ctx.tenant_id {
         Some(tenant_id) => record.tenant_id.as_ref() == Some(tenant_id),
-        None => true,
+        None => false,
     };
-    subject_ok && tenant_ok
+    if owner_subject_ok && owner_tenant_ok {
+        return true;
+    }
+
+    grants.iter().any(|grant| {
+        let subject_ok = match (&grant.subject, &ctx.subject) {
+            (Some(grant_subject), Some(subject)) => grant_subject == subject,
+            _ => false,
+        };
+        let tenant_ok = match (&grant.tenant_id, &ctx.tenant_id) {
+            (Some(grant_tenant), Some(tenant_id)) => grant_tenant == tenant_id,
+            _ => false,
+        };
+        subject_ok || tenant_ok
+    })
 }
 
 #[cfg(test)]
@@ -636,5 +796,28 @@ mod tests {
             .await
             .expect("hidden read");
         assert!(hidden.is_none());
+
+        repository
+            .grant_read_access(
+                "rec-1",
+                ReadGrant {
+                    subject: Some("owner-b".to_string()),
+                    tenant_id: None,
+                },
+            )
+            .await
+            .expect("grant read access");
+
+        let shared = repository
+            .read_record(
+                "rec-1",
+                &AccessContext {
+                    subject: Some("owner-b".to_string()),
+                    tenant_id: Some("tenant-a".to_string()),
+                },
+            )
+            .await
+            .expect("shared read");
+        assert!(shared.is_some());
     }
 }

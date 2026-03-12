@@ -26,6 +26,7 @@ struct JwtValidator {
     jwks_url: String,
     issuer: String,
     audience: String,
+    allowed_algorithms: Vec<Algorithm>,
     cache: Arc<RwLock<Option<CachedJwks>>>,
 }
 
@@ -101,6 +102,7 @@ impl AuthService {
                     audience: config.audience.clone().ok_or_else(|| {
                         AppError::Internal("AUTH_AUDIENCE is required".to_string())
                     })?,
+                    allowed_algorithms: vec![Algorithm::RS256, Algorithm::RS384, Algorithm::RS512],
                     cache: Arc::new(RwLock::new(None)),
                 }),
             };
@@ -141,6 +143,26 @@ impl AuthService {
             }
         }
     }
+
+    #[cfg(test)]
+    pub fn new_test_hmac(secret: &[u8], issuer: &str, audience: &str) -> Self {
+        let mut keys = HashMap::new();
+        keys.insert("test-kid".to_string(), DecodingKey::from_secret(secret));
+        Self {
+            mode: AuthMode::JwtJwks,
+            validator: Some(JwtValidator {
+                client: reqwest::Client::new(),
+                jwks_url: "http://test.invalid/jwks".to_string(),
+                issuer: issuer.to_string(),
+                audience: audience.to_string(),
+                allowed_algorithms: vec![Algorithm::HS256],
+                cache: Arc::new(RwLock::new(Some(CachedJwks {
+                    keys,
+                    expires_at: Instant::now() + Duration::from_secs(3600),
+                }))),
+            }),
+        }
+    }
 }
 
 impl JwtValidator {
@@ -152,14 +174,12 @@ impl JwtValidator {
             .ok_or_else(|| AppError::Unauthorized("token missing `kid` header".to_string()))?;
         let key = self.decoding_key(&kid).await?;
 
-        let mut validation = Validation::new(match header.alg {
-            Algorithm::RS256 | Algorithm::RS384 | Algorithm::RS512 => header.alg,
-            _ => {
-                return Err(AppError::Unauthorized(
-                    "unsupported token signing algorithm".to_string(),
-                ));
-            }
-        });
+        if !self.allowed_algorithms.contains(&header.alg) {
+            return Err(AppError::Unauthorized(
+                "unsupported token signing algorithm".to_string(),
+            ));
+        }
+        let mut validation = Validation::new(header.alg);
         validation.set_issuer(&[self.issuer.as_str()]);
         validation.set_audience(&[self.audience.as_str()]);
 

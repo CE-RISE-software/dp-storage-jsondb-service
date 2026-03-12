@@ -19,3 +19,14 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
         FOREIGN KEY (record_id) REFERENCES records(id)
         ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS record_read_grants (
+    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    record_id VARCHAR(255) NOT NULL,
+    grantee_sub VARCHAR(255) NULL,
+    grantee_tenant_id VARCHAR(255) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_record_read_grant_record
+        FOREIGN KEY (record_id) REFERENCES records(id)
+        ON DELETE CASCADE
+);

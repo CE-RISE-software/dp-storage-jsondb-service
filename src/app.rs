@@ -245,6 +245,8 @@ mod tests {
         body::{self, Body},
         http::{Request, StatusCode},
     };
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use serde::Serialize;
     use tower::ServiceExt;
 
     use crate::{
@@ -267,13 +269,7 @@ mod tests {
     }
 
     fn jwt_auth() -> AuthService {
-        AuthService::new(&AuthConfig {
-            mode: AuthMode::JwtJwks,
-            jwks_url: Some("https://example.org/jwks".to_string()),
-            issuer: Some("https://issuer.example.org".to_string()),
-            audience: Some("ce-rise".to_string()),
-        })
-        .expect("jwt auth service")
+        AuthService::new_test_hmac(TEST_JWT_SECRET.as_bytes(), TEST_ISSUER, TEST_AUDIENCE)
     }
 
     fn test_app(auth: AuthService) -> Router {
@@ -418,6 +414,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disabled_auth_allows_write_without_authorization_header() {
+        let app = test_app(disabled_auth());
+        let response = app
+            .oneshot(
+                Request::post("/records")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "idem-1")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": "rec-1",
+                            "model": "passport",
+                            "version": "1.0.0",
+                            "payload": {"record_scope": "product"}
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn disabled_auth_uses_fixed_dev_identity_for_visibility() {
+        let app = test_app(disabled_auth());
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::post("/records")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "idem-1")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": "rec-1",
+                            "model": "passport",
+                            "version": "1.0.0",
+                            "payload": {"record_scope": "product"}
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("seed response");
+
+        let response = app
+            .oneshot(
+                Request::post("/records/query")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "filter": {
+                                "where": [
+                                    { "field": "model", "op": "eq", "value": "passport" }
+                                ],
+                                "limit": 10,
+                                "offset": 0
+                            }
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body bytes");
+        let value: serde_json::Value = serde_json::from_slice(&bytes).expect("json body");
+        assert_eq!(value["records"].as_array().map(Vec::len), Some(1));
+        assert_eq!(value["records"][0]["id"], "rec-1");
+    }
+
+    #[tokio::test]
     async fn protected_routes_require_token_in_jwt_mode() {
         let app = test_app(jwt_auth());
         let response = app
@@ -429,5 +503,122 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn protected_routes_reject_invalid_token() {
+        let app = test_app(jwt_auth());
+        let response = app
+            .oneshot(
+                Request::get("/records/rec-1")
+                    .header("authorization", "Bearer invalid-token")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn protected_routes_reject_missing_scope() {
+        let app = test_app(jwt_auth());
+        let token = signed_token(&["records:read"]);
+        let response = app
+            .oneshot(
+                Request::post("/records")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "idem-1")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": "rec-1",
+                            "model": "passport",
+                            "version": "1.0.0",
+                            "payload": {"record_scope": "product"}
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = response.status();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body bytes");
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "unexpected body: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+    }
+
+    #[tokio::test]
+    async fn protected_routes_accept_valid_token_with_scope() {
+        let app = test_app(jwt_auth());
+        let token = signed_token(&["records:write"]);
+        let response = app
+            .oneshot(
+                Request::post("/records")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "idem-1")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": "rec-1",
+                            "model": "passport",
+                            "version": "1.0.0",
+                            "payload": {"record_scope": "product"}
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let status = response.status();
+        let bytes = body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body bytes");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "unexpected body: {}",
+            String::from_utf8_lossy(&bytes)
+        );
+    }
+
+    const TEST_ISSUER: &str = "https://issuer.example.org";
+    const TEST_AUDIENCE: &str = "ce-rise";
+    const TEST_JWT_SECRET: &str = "test-secret-for-http-auth";
+    #[derive(Serialize)]
+    struct TestClaims {
+        sub: String,
+        iss: String,
+        aud: String,
+        exp: usize,
+        scope: String,
+        tenant_id: String,
+    }
+
+    fn signed_token(scopes: &[&str]) -> String {
+        let mut header = Header::new(Algorithm::HS256);
+        header.kid = Some("test-kid".to_string());
+        let claims = TestClaims {
+            sub: "user-1".to_string(),
+            iss: TEST_ISSUER.to_string(),
+            aud: TEST_AUDIENCE.to_string(),
+            exp: (chrono::Utc::now().timestamp() + 3600) as usize,
+            scope: scopes.join(" "),
+            tenant_id: "tenant-a".to_string(),
+        };
+        encode(
+            &header,
+            &claims,
+            &EncodingKey::from_secret(TEST_JWT_SECRET.as_bytes()),
+        )
+        .expect("signed token")
     }
 }

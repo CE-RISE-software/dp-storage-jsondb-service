@@ -1,12 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-docker compose -f docker-compose.mariadb.yml up -d
-trap 'docker compose -f docker-compose.mariadb.yml down -v' EXIT
+project_name="dp-storage-jsondb-mariadb-test"
 
-until docker compose -f docker-compose.mariadb.yml ps --format json | grep -q '"health":"healthy"'; do
+docker compose -p "${project_name}" -f docker-compose.mariadb.yml down -v >/dev/null 2>&1 || true
+docker compose -p "${project_name}" -f docker-compose.mariadb.yml up -d
+trap 'docker compose -p "${project_name}" -f docker-compose.mariadb.yml down -v' EXIT
+
+container_id="$(docker compose -p "${project_name}" -f docker-compose.mariadb.yml ps -q | head -n 1)"
+if [ -z "${container_id}" ]; then
+  echo "mariadb container id not found"
+  exit 1
+fi
+
+for _ in $(seq 1 60); do
+  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}")"
+  if [ "${health}" = "healthy" ] || [ "${health}" = "running" ]; then
+    break
+  fi
   sleep 2
 done
+
+health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}")"
+if [ "${health}" != "healthy" ] && [ "${health}" != "running" ]; then
+  echo "mariadb container did not become ready: ${health}"
+  docker logs "${container_id}" || true
+  exit 1
+fi
 
 export TEST_DB_HOST=127.0.0.1
 export TEST_DB_PORT=3307

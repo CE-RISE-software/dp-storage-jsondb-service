@@ -7,7 +7,7 @@ use dp_storage_jsondb_service::{
         QueryOperator, QueryRequest, RecordQueryCondition, RecordQueryFilter, RecordQuerySort,
         SortDirection,
     },
-    repository::{AccessContext, Record, RecordRepository, SqlRecordRepository},
+    repository::{AccessContext, ReadGrant, Record, RecordRepository, SqlRecordRepository},
 };
 use sqlx::{Executor, mysql::MySqlPoolOptions};
 
@@ -34,6 +34,9 @@ async fn reset_database(config: &DatabaseConfig) {
         .connect(&config.url())
         .await
         .expect("connect reset pool");
+    pool.execute("DELETE FROM record_read_grants")
+        .await
+        .expect("clear record_read_grants");
     pool.execute("DELETE FROM idempotency_keys")
         .await
         .expect("clear idempotency_keys");
@@ -155,4 +158,188 @@ async fn sql_repository_supports_write_read_query_and_idempotency() {
 
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].id, "rec-1");
+
+    let schema_records = repository
+        .query_records(
+            &QueryRequest {
+                filter: RecordQueryFilter {
+                    where_conditions: vec![RecordQueryCondition {
+                        field: "payload.applied_schemas".to_string(),
+                        op: QueryOperator::Contains,
+                        value: serde_json::json!({"schema_url":"urn:test"}),
+                    }],
+                    sort: vec![RecordQuerySort {
+                        field: "id".to_string(),
+                        direction: SortDirection::Asc,
+                    }],
+                    limit: Some(10),
+                    offset: Some(0),
+                },
+            },
+            &owner_ctx("owner-a", "tenant-a"),
+        )
+        .await
+        .expect("query records by schema containment");
+    assert_eq!(schema_records.len(), 2);
+    assert_eq!(schema_records[0].id, "rec-1");
+    assert_eq!(schema_records[1].id, "rec-2");
+
+    let paged_records = repository
+        .query_records(
+            &QueryRequest {
+                filter: RecordQueryFilter {
+                    where_conditions: vec![RecordQueryCondition {
+                        field: "model".to_string(),
+                        op: QueryOperator::Eq,
+                        value: serde_json::json!("passport"),
+                    }],
+                    sort: vec![RecordQuerySort {
+                        field: "id".to_string(),
+                        direction: SortDirection::Asc,
+                    }],
+                    limit: Some(1),
+                    offset: Some(1),
+                },
+            },
+            &owner_ctx("owner-a", "tenant-a"),
+        )
+        .await
+        .expect("query paged records");
+    assert_eq!(paged_records.len(), 1);
+    assert_eq!(paged_records[0].id, "rec-2");
+
+    let tenant_hidden = repository
+        .query_records(
+            &QueryRequest {
+                filter: RecordQueryFilter {
+                    where_conditions: vec![RecordQueryCondition {
+                        field: "model".to_string(),
+                        op: QueryOperator::Eq,
+                        value: serde_json::json!("passport"),
+                    }],
+                    sort: vec![RecordQuerySort {
+                        field: "id".to_string(),
+                        direction: SortDirection::Asc,
+                    }],
+                    limit: Some(10),
+                    offset: Some(0),
+                },
+            },
+            &owner_ctx("owner-a", "tenant-b"),
+        )
+        .await
+        .expect("query tenant hidden records");
+    assert!(tenant_hidden.is_empty());
+
+    let inequality_records = repository
+        .query_records(
+            &QueryRequest {
+                filter: RecordQueryFilter {
+                    where_conditions: vec![RecordQueryCondition {
+                        field: "payload.record_scope".to_string(),
+                        op: QueryOperator::Ne,
+                        value: serde_json::json!("product"),
+                    }],
+                    sort: vec![RecordQuerySort {
+                        field: "id".to_string(),
+                        direction: SortDirection::Asc,
+                    }],
+                    limit: Some(10),
+                    offset: Some(0),
+                },
+            },
+            &owner_ctx("owner-a", "tenant-a"),
+        )
+        .await
+        .expect("query ne records");
+    assert_eq!(inequality_records.len(), 1);
+    assert_eq!(inequality_records[0].id, "rec-2");
+
+    let in_records = repository
+        .query_records(
+            &QueryRequest {
+                filter: RecordQueryFilter {
+                    where_conditions: vec![RecordQueryCondition {
+                        field: "id".to_string(),
+                        op: QueryOperator::In,
+                        value: serde_json::json!(["rec-1", "rec-2", "rec-3"]),
+                    }],
+                    sort: vec![RecordQuerySort {
+                        field: "id".to_string(),
+                        direction: SortDirection::Asc,
+                    }],
+                    limit: Some(10),
+                    offset: Some(0),
+                },
+            },
+            &owner_ctx("owner-a", "tenant-a"),
+        )
+        .await
+        .expect("query in records");
+    assert_eq!(in_records.len(), 2);
+    assert_eq!(in_records[0].id, "rec-1");
+    assert_eq!(in_records[1].id, "rec-2");
+
+    let exists_records = repository
+        .query_records(
+            &QueryRequest {
+                filter: RecordQueryFilter {
+                    where_conditions: vec![RecordQueryCondition {
+                        field: "payload.applied_schemas[0].schema_url".to_string(),
+                        op: QueryOperator::Exists,
+                        value: serde_json::json!(true),
+                    }],
+                    sort: vec![RecordQuerySort {
+                        field: "id".to_string(),
+                        direction: SortDirection::Asc,
+                    }],
+                    limit: Some(10),
+                    offset: Some(0),
+                },
+            },
+            &owner_ctx("owner-a", "tenant-a"),
+        )
+        .await
+        .expect("query exists records");
+    assert_eq!(exists_records.len(), 2);
+
+    let numeric_records = repository
+        .query_records(
+            &QueryRequest {
+                filter: RecordQueryFilter {
+                    where_conditions: vec![RecordQueryCondition {
+                        field: "payload.weight".to_string(),
+                        op: QueryOperator::Gte,
+                        value: serde_json::json!(12),
+                    }],
+                    sort: vec![RecordQuerySort {
+                        field: "id".to_string(),
+                        direction: SortDirection::Asc,
+                    }],
+                    limit: Some(10),
+                    offset: Some(0),
+                },
+            },
+            &owner_ctx("owner-a", "tenant-a"),
+        )
+        .await
+        .expect("query numeric records");
+    assert_eq!(numeric_records.len(), 2);
+
+    repository
+        .grant_read_access(
+            "rec-1",
+            ReadGrant {
+                subject: Some("owner-b".to_string()),
+                tenant_id: None,
+            },
+        )
+        .await
+        .expect("grant read access");
+
+    let shared_read = repository
+        .read_record("rec-1", &owner_ctx("owner-b", "tenant-a"))
+        .await
+        .expect("shared read");
+    assert!(shared_read.is_some());
 }
