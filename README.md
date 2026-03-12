@@ -1,4 +1,4 @@
-# CE-RISE Digital Passport JSON Database Storage Service
+# CE-RISE DP Storage JSONDB Service
 
 [![DOI](https://zenodo.org/badge/DOI/TOBEOBTAINED.svg)](https://doi.org/TOBEOBTAINED)
 
@@ -10,7 +10,7 @@ This is a separate deployable microservice used by `hex-core-service` through it
 
 ## What This Project Provides
 
-- Source code for the `dp-storage-jsondb-service` HTTP backend.
+- Source code for the `dp-storage-jsondb` HTTP backend.
 - Containerized service image for deployment.
 - Runtime-compatible backend for the `hex-core-service` `io-http` adapter.
 
@@ -29,7 +29,7 @@ This is a separate deployable microservice used by `hex-core-service` through it
                                                            | HTTP /records*
                                                            v
                                             +-----------------------------+
-                                            | dp-storage-jsondb-service   |
+                                            | dp-storage-jsondb           |
                                             |  - auth validation          |
                                             |  - idempotency handling     |
                                             |  - query translation        |
@@ -53,7 +53,7 @@ This backend is called by `hex-core-service`, not directly by end users in the p
 ### Pull Image
 
 ```bash
-docker pull rg.fr-par.scw.cloud/ce-rise-software/dp-storage-jsondb-service:<tag>
+docker pull rg.fr-par.scw.cloud/ce-rise-software/dp-storage-jsondb:<tag>
 ```
 
 Use an explicit version tag such as `v0.0.1` for stable deployments.
@@ -76,7 +76,7 @@ docker run --rm -p 8080:8080 \
   -e AUTH_JWKS_URL="https://<idp>/realms/<realm>/protocol/openid-connect/certs" \
   -e AUTH_ISSUER="https://<idp>/realms/<realm>" \
   -e AUTH_AUDIENCE="hex-core-service" \
-  rg.fr-par.scw.cloud/ce-rise-software/dp-storage-jsondb-service:<tag>
+  rg.fr-par.scw.cloud/ce-rise-software/dp-storage-jsondb:<tag>
 ```
 
 ### Required Runtime Parameters

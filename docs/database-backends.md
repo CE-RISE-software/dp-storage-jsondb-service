@@ -2,7 +2,7 @@
 
 ## Overview
 
-`dp-storage-jsondb-service` currently supports three SQL backends:
+`dp-storage-jsondb` currently supports three SQL backends:
 
 - MySQL
 - MariaDB

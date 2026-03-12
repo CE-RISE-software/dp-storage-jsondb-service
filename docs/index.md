@@ -1,8 +1,8 @@
-# CE-RISE Digital Passport JSON Database Storage Service
+# CE-RISE DP Storage JSONDB Service
 
-This site contains the technical documentation for the CE-RISE `dp-storage-jsondb-service`.
+This site contains the technical documentation for the CE-RISE `dp-storage-jsondb`.
 
-`dp-storage-jsondb-service` is a standalone HTTP storage backend used by `hex-core-service` through the `io-http` adapter. Its job is deliberately narrow: persist records, retrieve records, evaluate storage-side queries, enforce storage-side access checks, and expose operational endpoints for health, readiness, and API description.
+`dp-storage-jsondb` is a standalone HTTP storage backend used by `hex-core-service` through the `io-http` adapter. Its job is deliberately narrow: persist records, retrieve records, evaluate storage-side queries, enforce storage-side access checks, and expose operational endpoints for health, readiness, and API description.
 
 This service does not perform model resolution, payload validation, or orchestration of business workflows. Those responsibilities remain in `hex-core-service`.
 
@@ -30,7 +30,7 @@ This service does not perform model resolution, payload validation, or orchestra
                                                            | HTTP /records*
                                                            v
                                             +-----------------------------+
-                                            | dp-storage-jsondb-service   |
+                                            | dp-storage-jsondb           |
                                             |  - auth enforcement         |
                                             |  - idempotency              |
                                             |  - query translation        |

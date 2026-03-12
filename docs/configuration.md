@@ -2,7 +2,7 @@
 
 ## Overview
 
-`dp-storage-jsondb-service` is configured entirely through environment variables.
+`dp-storage-jsondb` is configured entirely through environment variables.
 
 This keeps the container image generic so the same build can be deployed with different database backends, credentials, hostnames, and auth settings without rebuilding the image.
 

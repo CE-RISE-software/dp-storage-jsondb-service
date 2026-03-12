@@ -2,7 +2,7 @@
 
 ## Service Role
 
-`dp-storage-jsondb-service` is the persistence backend for CE-RISE `hex-core-service`.
+`dp-storage-jsondb` is the persistence backend for CE-RISE `hex-core-service`.
 
 It exists to provide a stable storage-side HTTP contract behind the `hex-core-service` `io-http` adapter. Its responsibility is not to understand model semantics in depth, resolve model artifacts, or validate domain rules. Its responsibility is to accept already-shaped records from `hex-core-service`, persist them, retrieve them, and evaluate storage-side queries over record metadata and JSON payloads.
 
@@ -33,7 +33,7 @@ This narrow role is intentional. It keeps the persistence layer deployable, repl
                | POST /records/query
                v
 +-----------------------------+
-| dp-storage-jsondb-service   |
+| dp-storage-jsondb           |
 |-----------------------------|
 | - auth enforcement          |
 | - idempotency control       |
@@ -66,7 +66,7 @@ This narrow role is intentional. It keeps the persistence layer deployable, repl
 - deciding when records should be created or queried
 - calling the storage backend through the configured outbound adapter
 
-### Responsibilities of `dp-storage-jsondb-service`
+### Responsibilities of `dp-storage-jsondb`
 
 This service is responsible for:
 

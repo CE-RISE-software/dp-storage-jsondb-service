@@ -8,7 +8,7 @@ It does not embed the database server inside the service image.
 
 That means a normal deployment consists of:
 
-- one `dp-storage-jsondb-service` container
+- one `dp-storage-jsondb` container
 - one SQL backend instance
 
 ## Container Deployment Model

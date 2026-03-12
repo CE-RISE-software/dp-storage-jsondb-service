@@ -8,8 +8,6 @@ on:
 jobs:
     docker-build-and-push:
         runs-on: codeberg-medium
-        needs:
-            - release
         container:
             image: gcr.io/kaniko-project/executor:debug
         steps:

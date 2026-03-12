@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This page documents the storage-side HTTP contract implemented by `dp-storage-jsondb-service`.
+This page documents the storage-side HTTP contract implemented by `dp-storage-jsondb`.
 
 This contract must remain compatible with the `hex-core-service` `io-http` adapter. The service is therefore not free to invent a different wire format casually. Any incompatible change to these endpoints is a breaking change for the adapter relationship.
 

@@ -1,5 +1,5 @@
 [book]
-title = "CE-RISE Digital Passport JSON Database Storage Service"
+title = "CE-RISE DP Storage JSONDB Service"
 authors = ["CE-RISE consortium"]
 language = "en"
 src = "."

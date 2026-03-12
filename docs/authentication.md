@@ -2,7 +2,7 @@
 
 ## Overview
 
-`dp-storage-jsondb-service` enforces authentication and authorization on `/records*` endpoints in normal operation.
+`dp-storage-jsondb` enforces authentication and authorization on `/records*` endpoints in normal operation.
 
 The service supports two auth modes:
 
