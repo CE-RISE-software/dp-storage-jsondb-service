@@ -5,12 +5,17 @@
 # Service
 
 - [Architecture](architecture.md)
-- [API Reference](api-reference.md)
+- [HTTP Contract](http-contract.md)
 - [Authentication](authentication.md)
-- [Model Onboarding](model-onboarding.md)
+- [Query Language](query-language.md)
 
-# Operations
+# Runtime
 
-- [Configuration Reference](configuration.md)
+- [Configuration](configuration.md)
 - [Deployment](deployment.md)
-- [Operations Runbook](runbook.md)
+- [Database Backends](database-backends.md)
+
+# Quality
+
+- [Testing](testing.md)
+- [Operations](operations.md)

@@ -1,64 +1,87 @@
 # CE-RISE Digital Passport JSON Database Storage Service
-This site contains the technical documentation for the CE-RISE ...
 
-Use the navigation sidebar to access architecture, API, configuration, deployment,
-adapter contract, and operations documentation.
+This site contains the technical documentation for the CE-RISE `dp-storage-jsondb-service`.
 
----
+`dp-storage-jsondb-service` is a standalone HTTP storage backend used by `hex-core-service` through the `io-http` adapter. Its job is deliberately narrow: persist records, retrieve records, evaluate storage-side queries, enforce storage-side access checks, and expose operational endpoints for health, readiness, and API description.
 
-## First 5 Minutes
+This service does not perform model resolution, payload validation, or orchestration of business workflows. Those responsibilities remain in `hex-core-service`.
 
-This quickstart verifies that the service is reachable and can process one validation request.
+## What This Service Does
 
-### 1. Start the service
+- Accepts the backend HTTP contract expected by `hex-core-service`
+- Stores full record payloads as JSON documents
+- Supports MariaDB, MySQL, and PostgreSQL
+- Enforces bearer-token authentication in normal operation
+- Applies idempotency protection for record creation
+- Evaluates canonical record queries, including JSON payload paths
+- Exposes operational endpoints for health and readiness
 
-Run your deployed container (or local instance) with the required environment variables configured.
+## Where It Sits In The CE-RISE Stack
 
-### 2. Check health
-
-```bash
-curl http://localhost:8080/admin/health
+```text
++------------------+        HTTP API         +-----------------------------+
+| Client / Caller  | ---------------------> | CE-RISE hex-core-service    |
++------------------+                        |  - validation               |
+                                            |  - model resolution         |
+                                            |  - orchestration            |
+                                            |  - io-http adapter          |
+                                            +--------------+--------------+
+                                                           |
+                                                           | HTTP /records*
+                                                           v
+                                            +-----------------------------+
+                                            | dp-storage-jsondb-service   |
+                                            |  - auth enforcement         |
+                                            |  - idempotency              |
+                                            |  - query translation        |
+                                            |  - persistence              |
+                                            +--------------+--------------+
+                                                           |
+                                                           | SQL
+                                                           v
+                                  +-----------------------------------------------+
+                                  | MariaDB / MySQL / PostgreSQL                  |
+                                  |  - records                                    |
+                                  |  - idempotency_keys                           |
+                                  |  - record_read_grants                         |
+                                  +-----------------------------------------------+
 ```
 
-Expected response:
+In the primary deployment model, callers do not interact with this service directly. They call `hex-core-service`, and `hex-core-service` calls this backend.
 
-```json
-{"status":"ok"}
-```
+## Supported Database Backends
 
-### 3. Check loaded models
+The current implementation supports:
 
-```bash
-curl http://localhost:8080/models
-```
+- MySQL
+- MariaDB
+- PostgreSQL
 
-Pick one `model` and `version` from the response.
+All three backends are exercised by local live-database integration tests.
 
-### 4. Validate a payload
+## Documentation Guide
 
-```bash
-curl -X POST "http://localhost:8080/models/<model>/versions/<version>:validate" \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payload": {
-      "id": "example-001",
-      "name": "example record"
-    }
-  }'
-```
+Use the navigation sidebar to access the main topics:
 
-Expected response shape:
+- Architecture and service boundaries
+- HTTP contract and endpoint behavior
+- Authentication and authorization behavior
+- Query language and payload field paths
+- Runtime configuration
+- Deployment options for each supported database
+- Backend-specific notes
+- Testing strategy and local integration scripts
+- Operational behavior and troubleshooting
 
-```json
-{
-  "passed": true,
-  "results": []
-}
-```
+## First Steps
 
-If your auth mode is `none`, you can omit the `Authorization` header.
+If you are new to this service, read the pages in this order:
 
+1. `Architecture`
+2. `HTTP Contract`
+3. `Configuration`
+4. `Deployment`
+5. `Operations`
 
 ---
 
