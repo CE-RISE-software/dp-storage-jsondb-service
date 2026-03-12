@@ -1,0 +1,213 @@
+name: Release
+
+on:
+    push:
+        tags:
+            - "v*.*.*"
+
+jobs:
+    cli-binaries:
+        runs-on: codeberg-medium
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - target: x86_64-unknown-linux-musl
+                      archive_suffix: linux-x86_64
+                      binary_suffix: ""
+                    - target: x86_64-apple-darwin
+                      archive_suffix: macos-x86_64
+                      binary_suffix: ""
+                    - target: x86_64-pc-windows-gnu
+                      archive_suffix: windows-x86_64
+                      binary_suffix: .exe
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              run: |
+                  set -euo pipefail
+                  if ! command -v rustup >/dev/null 2>&1; then
+                    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                    echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+                  fi
+                  . "$HOME/.cargo/env"
+                  rustup toolchain install stable --profile minimal
+                  rustup default stable
+                  rustc --version
+                  cargo --version
+
+            - name: Install Zig
+              run: |
+                  set -euo pipefail
+                  ZIG_VERSION=0.13.0
+                  curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz
+                  mkdir -p /tmp/zig
+                  tar -xf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
+                  echo "/tmp/zig" >> "$GITHUB_PATH"
+                  /tmp/zig/zig version
+
+            - name: Install target toolchain
+              run: |
+                  set -euo pipefail
+                  . "$HOME/.cargo/env"
+                  rustup target add ${{ matrix.target }}
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+            - name: Install cargo-zigbuild
+              run: cargo install --locked cargo-zigbuild
+
+            - name: Extract version tag
+              id: tag
+              run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+            - name: Build hex-cli
+              run: cargo zigbuild --release -p hex-cli --target ${{ matrix.target }}
+              env:
+                  RUSTFLAGS: "-D warnings"
+
+            - name: Package archive
+              run: |
+                  set -euo pipefail
+                  BIN_NAME="hex${{ matrix.binary_suffix }}"
+                  DIST_NAME="hex-cli-${{ steps.tag.outputs.VERSION }}-${{ matrix.archive_suffix }}"
+                  mkdir -p dist
+                  cp "target/${{ matrix.target }}/release/${BIN_NAME}" "dist/${BIN_NAME}"
+                  (cd dist && tar -czf "${DIST_NAME}.tar.gz" "${BIN_NAME}")
+
+            - name: Upload CLI archive
+              uses: https://github.com/actions/upload-artifact@v3
+              with:
+                  name: hex-cli-${{ steps.tag.outputs.VERSION }}-${{ matrix.archive_suffix }}
+                  path: |
+                      dist/*.tar.gz
+
+    release:
+        runs-on: codeberg-medium
+        needs:
+            - cli-binaries
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              run: |
+                  set -euo pipefail
+                  if ! command -v rustup >/dev/null 2>&1; then
+                    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                    echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+                  fi
+                  . "$HOME/.cargo/env"
+                  rustup toolchain install stable --profile minimal
+                  rustup default stable
+                  rustc --version
+                  cargo --version
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+            - name: Build release binary
+              run: cargo build --release -p hex-api
+
+            - name: Extract version tag
+              id: tag
+              run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+    docker-build-and-push:
+        runs-on: codeberg-medium
+        needs:
+            - release
+        container:
+            image: gcr.io/kaniko-project/executor:debug
+        steps:
+            - name: Prepare build context
+              run: |
+                  set -euo pipefail
+                  if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -f "${GITHUB_WORKSPACE}/Dockerfile" ]; then
+                    echo "CONTEXT_DIR=${GITHUB_WORKSPACE}" >> "$GITHUB_ENV"
+                    exit 0
+                  fi
+                  CANDIDATE="$(find /workspace -maxdepth 6 -type f -name Dockerfile | head -n 1 || true)"
+                  if [ -n "${CANDIDATE}" ]; then
+                    echo "CONTEXT_DIR=$(dirname "${CANDIDATE}")" >> "$GITHUB_ENV"
+                    exit 0
+                  fi
+                  echo "Dockerfile not found in mounted workspace, downloading archive for ${GITHUB_SHA}"
+                  ARCHIVE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz"
+                  mkdir -p /tmp/context
+                  wget -qO /tmp/repo.tar.gz "${ARCHIVE_URL}"
+                  tar -xzf /tmp/repo.tar.gz -C /tmp/context --strip-components=1
+                  if [ ! -f /tmp/context/Dockerfile ]; then
+                    echo "Could not find Dockerfile after archive download."
+                    ls -la /
+                    ls -la /workspace || true
+                    find /workspace -maxdepth 6 -type d -print || true
+                    ls -la /tmp/context || true
+                    exit 1
+                  fi
+                  echo "CONTEXT_DIR=/tmp/context" >> "$GITHUB_ENV"
+
+            - name: Extract version tag
+              id: tag
+              run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+            - name: Build and push image with Kaniko
+              env:
+                  VERSION: ${{ steps.tag.outputs.VERSION }}
+                  REGISTRY_HOST: ${{ vars.REGISTRY_HOST }}
+                  REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE }}
+                  REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+                  REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+              run: |
+                  set -euo pipefail
+                  IMAGE_BASE="${REGISTRY_HOST}/${REGISTRY_NAMESPACE}/dp-storage-jsondb"
+                  AUTH="$(printf '%s:%s' "${REGISTRY_USERNAME}" "${REGISTRY_PASSWORD}" | base64 | tr -d '\n')"
+                  mkdir -p /kaniko/.docker
+                  cat > /kaniko/.docker/config.json <<EOF
+                  {"auths":{"${REGISTRY_HOST}":{"auth":"${AUTH}"}}}
+                  EOF
+                  /kaniko/executor \
+                    --context "${CONTEXT_DIR}" \
+                    --dockerfile "${CONTEXT_DIR}/Dockerfile" \
+                    --destination "${IMAGE_BASE}:${VERSION}"
+
+    docker-tag-latest:
+        runs-on: codeberg-medium
+        needs:
+            - docker-build-and-push
+        container:
+            image: gcr.io/go-containerregistry/crane:debug
+        steps:
+            - name: Extract version tag
+              id: tag
+              run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+            - name: Tag latest with Crane
+              env:
+                  VERSION: ${{ steps.tag.outputs.VERSION }}
+                  REGISTRY_HOST: ${{ vars.REGISTRY_HOST }}
+                  REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE }}
+                  REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+                  REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+              run: |
+                  set -euo pipefail
+                  IMAGE_BASE="${REGISTRY_HOST}/${REGISTRY_NAMESPACE}/dp-storage-jsondb"
+                  crane auth login -u "${REGISTRY_USERNAME}" -p "${REGISTRY_PASSWORD}" "${REGISTRY_HOST}"
+                  crane copy "${IMAGE_BASE}:${VERSION}" "${IMAGE_BASE}:latest"

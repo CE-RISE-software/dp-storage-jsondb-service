@@ -1,0 +1,42 @@
+name: Publish Docs to Codeberg Pages
+
+# Trigger only on commits pushed to main.
+on:
+    push:
+        branches:
+            - main
+
+jobs:
+    pages:
+        runs-on: codeberg-tiny
+
+        steps:
+            - name: Checkout
+              uses: https://github.com/actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install mdBook
+              run: |
+                  curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.5.2/mdbook-v0.5.2-x86_64-unknown-linux-gnu.tar.gz \
+                    | tar -xz --directory /usr/local/bin
+
+            - name: Build docs
+              run: mdbook build docs/
+
+            - name: Configure git
+              run: |
+                  git config --global user.email "ci@noreply.codeberg.org"
+                  git config --global user.name "Forgejo CI"
+
+            - name: Deploy to pages branch
+              run: |
+                  cd docs/book
+                  git init
+                  git add -A
+                  git commit -m "docs: publish ${GITHUB_REF_NAME} @ ${GITHUB_SHA::8}"
+                  git push --force \
+                    "https://${GITHUB_ACTOR}:${FORGEJO_TOKEN}@codeberg.org/${GITHUB_REPOSITORY}.git" \
+                    HEAD:pages
+              env:
+                  FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}

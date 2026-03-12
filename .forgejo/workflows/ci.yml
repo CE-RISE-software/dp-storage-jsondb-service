@@ -1,0 +1,46 @@
+name: CI — lint, test, build
+
+on:
+    push:
+        branches:
+            - "**"
+
+jobs:
+    check:
+        runs-on: codeberg-small
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              run: |
+                  set -euo pipefail
+                  if ! command -v rustup >/dev/null 2>&1; then
+                    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                    echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+                  fi
+                  . "$HOME/.cargo/env"
+                  rustup toolchain install stable --profile minimal --component rustfmt
+                  rustup default stable
+                  rustc --version
+                  cargo --version
+
+            - name: Cache cargo registry
+              uses: https://github.com/actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target
+                  key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-
+
+            - name: Check formatting
+              run: cargo fmt --all -- --check
+
+            - name: Unit and contract tests
+              run: cargo test --workspace
+              env:
+                  RUSTFLAGS: "-D warnings"
