@@ -20,7 +20,7 @@ This is a separate deployable microservice used by `hex-core-service` through it
 
 ### Storage Interaction View
 
-<img src="docs/images/storage.png" alt="Storage Interaction View" width="600"/>
+<img src="docs/images/storage.png" alt="Storage Interaction View" width="400"/>
 
 This backend is called by `hex-core-service`, not directly by end users in the primary deployment model.
 

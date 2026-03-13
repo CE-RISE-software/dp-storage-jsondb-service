@@ -18,7 +18,7 @@ This service does not perform model resolution, payload validation, or orchestra
 
 ## Where It Sits In The CE-RISE Stack
 
-<img src="docs/images/storage.png" alt="Storage Interaction View" width="600"/>
+<img src="docs/images/storage.png" alt="Storage Interaction View" width="400"/>
 
 In the primary deployment model, callers do not interact with this service directly. They call `hex-core-service`, and `hex-core-service` calls this backend.
 
