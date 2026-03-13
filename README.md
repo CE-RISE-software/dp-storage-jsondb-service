@@ -1,6 +1,6 @@
 # CE-RISE DP Storage JSONDB Service
 
-[![DOI](https://zenodo.org/badge/DOI/TOBEOBTAINED.svg)](https://doi.org/TOBEOBTAINED)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18984410.svg)](https://doi.org/10.5281/zenodo.18984410)
 
 A Rust-based storage backend service for CE-RISE `hex-core-service` that persists and retrieves full digital-passport-like records through a simple HTTP contract.
 
