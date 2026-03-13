@@ -18,34 +18,7 @@ This service does not perform model resolution, payload validation, or orchestra
 
 ## Where It Sits In The CE-RISE Stack
 
-```text
-+------------------+        HTTP API         +-----------------------------+
-| Client / Caller  | ---------------------> | CE-RISE hex-core-service    |
-+------------------+                        |  - validation               |
-                                            |  - model resolution         |
-                                            |  - orchestration            |
-                                            |  - io-http adapter          |
-                                            +--------------+--------------+
-                                                           |
-                                                           | HTTP /records*
-                                                           v
-                                            +-----------------------------+
-                                            | dp-storage-jsondb           |
-                                            |  - auth enforcement         |
-                                            |  - idempotency              |
-                                            |  - query translation        |
-                                            |  - persistence              |
-                                            +--------------+--------------+
-                                                           |
-                                                           | SQL
-                                                           v
-                                  +-----------------------------------------------+
-                                  | MariaDB / MySQL / PostgreSQL                  |
-                                  |  - records                                    |
-                                  |  - idempotency_keys                           |
-                                  |  - record_read_grants                         |
-                                  +-----------------------------------------------+
-```
+<img src="docs/images/storage.png" alt="Storage Interaction View" width="600"/>
 
 In the primary deployment model, callers do not interact with this service directly. They call `hex-core-service`, and `hex-core-service` calls this backend.
 

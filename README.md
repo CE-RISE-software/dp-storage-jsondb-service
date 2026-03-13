@@ -20,33 +20,7 @@ This is a separate deployable microservice used by `hex-core-service` through it
 
 ### Storage Interaction View
 
-```text
-+------------------+        HTTP API         +-----------------------------+
-| Client / Caller  | ---------------------> | CE-RISE hex-core-service    |
-+------------------+                        |  - validates payloads       |
-                                            |  - resolves model artifacts |
-                                            |  - uses io-http adapter     |
-                                            +--------------+--------------+
-                                                           |
-                                                           | HTTP /records*
-                                                           v
-                                            +-----------------------------+
-                                            | dp-storage-jsondb           |
-                                            |  - auth validation          |
-                                            |  - idempotency handling     |
-                                            |  - query translation        |
-                                            |  - record persistence       |
-                                            +--------------+--------------+
-                                                           |
-                                                           | SQL
-                                                           v
-                                  +-----------------------------------------------+
-                                  | MariaDB, MySQL, or PostgreSQL                 |
-                                  |  - records                                    |
-                                  |  - idempotency_keys                           |
-                                  |  - record_read_grants                         |
-                                  +-----------------------------------------------+
-```
+<img src="docs/images/storage.png" alt="Storage Interaction View" width="600"/>
 
 This backend is called by `hex-core-service`, not directly by end users in the primary deployment model.
 
