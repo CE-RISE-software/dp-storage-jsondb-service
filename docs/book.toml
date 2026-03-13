@@ -4,8 +4,10 @@ authors = ["CE-RISE consortium"]
 language = "en"
 src = "."
 
+[build]
+build-dir = "book"
+
 [output.html]
-default-theme = "light"
-preferred-dark-theme = "navy"
 git-repository-url = "https://codeberg.org/CE-RISE-software/dp-storage-jsondb-service"
+sidebar-header-nav = true
 additional-js = ["theme/custom.js"]
