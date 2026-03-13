@@ -110,7 +110,13 @@ Stores short-lived replay-protection keys for `POST /records` so duplicate submi
 
 ### `record_read_grants`
 
-Stores explicit read grants used by storage-side access enforcement. This service enforces stored grants, but it does not expose an HTTP grant-management API.
+Stores explicit read grants used by storage-side access enforcement.
+
+The table itself is created during database initialization through this service's migrations.
+
+The grant rows inside that table are not created automatically as generic seed data. They are expected to be inserted by an external database-side operation, administrative process, or separate service.
+
+This service enforces stored grants, but it does not expose an HTTP grant-management API.
 
 ## Access Control Model
 
@@ -123,7 +129,7 @@ Access enforcement currently combines:
 
 The service stores and enforces these rules when reading or querying records.
 
-Grant creation or governance workflows are outside the scope of this service.
+Grant creation or governance workflows are outside the scope of this service. In practice, that means an external operation may insert rows into `record_read_grants`, and this service will honor them during reads and queries.
 
 ## Backend Strategy
 

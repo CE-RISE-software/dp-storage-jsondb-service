@@ -42,6 +42,8 @@ Operationally, this means:
 
 Reads and queries are filtered by storage-side visibility rules.
 
+The supporting `record_read_grants` table is created by the service migrations, but the actual grant rows are expected to come from an external database-side process. This service does not provide an HTTP endpoint for creating those grants.
+
 If an operator sees a `404` or an empty query result where data is expected, the cause may be:
 
 - record really does not exist

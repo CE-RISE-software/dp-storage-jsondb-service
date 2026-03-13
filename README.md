@@ -6,6 +6,8 @@ A Rust-based storage backend service for CE-RISE `hex-core-service` that persist
 
 This is a separate deployable microservice used by `hex-core-service` through its `io-http` adapter. It keeps persistence concerns isolated from the core orchestration layer, stores complete record payloads as JSON documents, and relies on MariaDB, MySQL, or PostgreSQL as the backing store.
 
+** Documentation:** [https://ce-rise-software.codeberg.page/dp-storage-jsondb-service/](https://ce-rise-software.codeberg.page/dp-storage-jsondb-service/)
+
 ---
 
 ## What This Project Provides
